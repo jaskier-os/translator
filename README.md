@@ -1,111 +1,55 @@
-# Translator
+# translator
 
-A small HTTP translation microservice. It serves Meta's NLLB-200
-(`nllb-200-distilled-600M`) via [CTranslate2](https://github.com/OpenNMT/CTranslate2)
-behind a [FastAPI](https://fastapi.tiangolo.com/) API, supporting 200+ languages
-with single and batch translation. Requests are authenticated with a bearer token.
+## What it is
 
-## Endpoints
-
-- `GET /health` - liveness check, reports model name and active device.
-- `POST /translate` - translate text. Body:
-  ```json
-  {
-    "text": "Hello, how are you?",
-    "source_lang": "eng_Latn",
-    "target_lang": "zho_Hans"
-  }
-  ```
-  `text` may also be a list of strings (batch, up to 64). Language codes use the
-  NLLB `xxx_Yyyy` format (e.g. `eng_Latn`, `rus_Cyrl`, `jpn_Jpan`). Requires header
-  `Authorization: Bearer <API_KEY>`.
-
-## Prerequisites
-
-- Python 3.12
-- Internet access for the one-time model download/conversion (pulls
-  `transformers` + `torch` temporarily; the runtime itself does not need them).
-- Optional: an NVIDIA GPU with CUDA libraries if you set `DEVICE=cuda`.
-- Optional: Docker, to build/run the containerized version instead.
-
-## Setup
-
-1. Copy the example environment file and edit the values:
-   ```bash
-   cp .env.example .env
-   ```
-   Variables:
-
-   | Variable           | Default                  | Description                                                        |
-   | ------------------ | ------------------------ | ------------------------------------------------------------------ |
-   | `MODEL_DIR`        | `./models`               | Directory containing model subfolders.                             |
-   | `MODEL_NAME`       | `nllb-200-distilled-600M`| Model subfolder name inside `MODEL_DIR`.                            |
-   | `DEVICE`           | `cpu`                    | CTranslate2 device: `cpu`, `cuda`, or `auto`.                      |
-   | `PORT`             | `10015`                  | TCP port the service listens on.                                   |
-   | `BEAM_SIZE`        | `4`                      | Decoding beam size (1 = greedy/fastest, higher = better/slower).  |
-   | `MAX_INPUT_LENGTH` | `512`                    | Maximum input token length per request.                           |
-   | `API_KEY`          | (required)               | Bearer token clients must present. Set a strong random value.     |
-
-2. Fetch and convert the model weights (see "Model weights" below):
-   ```bash
-   bash fetch_models.sh
-   ```
+A translation HTTP service. It serves Meta's NLLB-200 (distilled-600M) through
+CTranslate2 for fast CPU/GPU inference. FastAPI, port 10015. `POST /translate`
+(bearer-token auth), `GET /health`. Runtime has no torch/transformers - the model
+is pre-converted to CTranslate2 format.
 
 ## Build / run
 
-The simplest path uses the bundled script, which creates a virtualenv, installs
-pinned dependencies, fetches the model if missing, and starts the server:
+Local:
 
 ```bash
-bash run.sh
+cp .env.example .env   # set API_KEY at minimum
+./run.sh               # venv + deps + fetch_models.sh (if needed) + start
 ```
 
-Or run the steps manually:
+`run.sh` creates the venv, installs requirements, runs `fetch_models.sh` when the
+model folder is missing, then starts `main.py`. You can also fetch the model
+manually:
 
 ```bash
-python3 -m venv venv
-venv/bin/pip install -r requirements.txt
-bash fetch_models.sh          # one-time model download + conversion
-venv/bin/python main.py
+bash fetch_models.sh   # downloads facebook/nllb-200-distilled-600M, converts to CTranslate2
 ```
 
-The service then listens on `http://0.0.0.0:$PORT`.
+That step installs `transformers` + `torch` temporarily for the one-time
+conversion and writes to `./models/nllb-200-distilled-600M` (gitignored, not
+committed).
 
-### Docker
-
-The Docker image converts the model at build time, so the resulting container is
-fully self-contained:
+Docker (multi-stage - the model is converted in the builder stage, so the final
+image has no torch):
 
 ```bash
 docker build -t translator .
-docker run --rm -p 10015:10015 -e API_KEY=your-secret translator
+docker run -p 10015:10015 --env-file .env translator
 ```
 
-## Test
+## Configuration
 
-Install the dev dependencies and run the smoke tests against a running instance:
+Config is env vars. `.env.example` is the source of truth - copy to `.env` and
+edit. What matters:
 
-```bash
-venv/bin/pip install -r requirements-dev.txt
-API_KEY=your-secret venv/bin/python test_e2e.py          # basic health + translate
-API_KEY=your-secret venv/bin/python test_20_languages.py # 20-language sweep
-```
+- `API_KEY` - bearer token, required. Set it to something real.
+- `MODEL_DIR`, `MODEL_NAME` - where the converted model lives (default
+  `./models/nllb-200-distilled-600M`).
+- `DEVICE` - `cpu`, `cuda`, or `auto`.
+- `BEAM_SIZE`, `MAX_INPUT_LENGTH`, `PORT`.
 
-`test_e2e.py` and `test_20_languages.py` read `TRANSLATOR_URL` (default
-`http://localhost:10015`) and `API_KEY` from the environment.
+## Dependencies
 
-## Model weights
-
-This service uses the **standard pretrained** NLLB-200 model
-`facebook/nllb-200-distilled-600M` from Hugging Face. The weights are NOT
-committed to this repository. `fetch_models.sh` downloads the model and converts
-it into the CTranslate2 format under `$MODEL_DIR/$MODEL_NAME`
-(`model.bin`, `sentencepiece.model`, `tokenizer.json`, ...). The Docker build
-performs the same conversion automatically. Set `QUANTIZATION` (default
-`float16`) to control the converted precision.
-
-## Networking / TLS
-
-This service speaks plain HTTP and has no VPN or certificate dependencies. Run it
-behind a reverse proxy (nginx, Caddy, Traefik) if you need TLS termination or to
-expose it publicly. Authentication is via the `API_KEY` bearer token only.
+Python 3.12, FastAPI + uvicorn, `ctranslate2`, `sentencepiece`, `pydantic`. The
+runtime does NOT need torch/transformers - those are only used by
+`fetch_models.sh` (and the Docker builder stage) to convert the weights once. For
+CUDA, `run.sh` auto-adds cublas/cudnn lib paths if present in the venv.
