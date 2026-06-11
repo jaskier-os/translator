@@ -1,5 +1,7 @@
 # translator
 
+> **Docs & wiki:** [github.com/jaskier-os/docs/wiki](https://github.com/jaskier-os/docs/wiki)
+
 ## What it is
 
 A translation HTTP service. It serves Meta's NLLB-200 (distilled-600M) through
